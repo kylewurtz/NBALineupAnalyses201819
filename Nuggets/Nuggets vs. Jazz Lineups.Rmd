@@ -1,0 +1,269 @@
+---
+title: "Nuggets vs. Jazz Lineups"
+author: "kyle wurtz"
+date: "2019.06.28"
+output: 
+  html_notebook:
+    toc: true
+    toc_float: true
+    theme: yeti
+    code_folding: hide
+---
+
+## Overview
+
+## Setup
+
+### Load Packages
+```{r load packages}
+require(tidyverse)
+require(magrittr)
+require(here)
+```
+
+### Inputs
+
+```{r}
+input_data = "/Users/kylewurtz/Dropbox/R/NBA Analysis/NBA PBP Data/2018-2019_NBA_PbP_Logs/[10-16-2018]-[06-13-2019]-combined-stats.csv"
+```
+
+## Data Prep
+
+```{r, results = "hide"}
+df = read_csv(input_data)
+```
+
+```{r}
+head(df)
+```
+
+Filter to just the games where the Nuggets played the Jazz:
+
+```{r}
+nuggets_game_ids = df %>% 
+  filter(team == "DEN") %>% 
+  select(game_id) %>% 
+  distinct() %>% 
+  mutate(game_id = gsub('"', "", gsub('="', "", game_id)))
+jazz_game_ids = df %>% 
+  filter(team == "UTA") %>% 
+  select(game_id) %>% 
+  distinct() %>% 
+  mutate(game_id = gsub('"', "", gsub('="', "", game_id)))
+nugs_vs_jazz_games = df %>% 
+  mutate(game_id = gsub('"', "", gsub('="', "", game_id))) %>% 
+  filter((game_id %in% nuggets_game_ids$game_id) & (game_id %in% jazz_game_ids$game_id))
+```
+
+Figure out if the Nuggets were home or away (How the f does BigDataBall not include this info in their data dump? Seriously...that's so pathetic...).
+
+```{r}
+home_or_away_ind = nugs_vs_jazz_games %>% 
+  select(game_id, a1:h5) %>% 
+  gather(key, value, -game_id) %>% 
+  filter(value == "Jamal Murray") %>% 
+  mutate(home_or_away = str_sub(key, 1, 1)) %>% 
+  select(game_id, home_or_away) %>% 
+  distinct()
+home_or_away_ind
+```
+
+Join indicator onto data set:
+
+```{r}
+nugs_vs_jazz_games %<>%
+  left_join(
+    home_or_away_ind %>% 
+      rename(nuggets_home_or_away_ind = home_or_away)
+  )
+```
+
+## Analysis
+
+### Millsap and Jokic
+
+How did the Nuggets perform against the Jazz while both Millsap and Jokic were on the court?
+
+Start by filtering to possessions where both were on the court:
+
+```{r}
+nugs_vs_jazz_games %<>% 
+  mutate(
+    jokic_on_court_ind = ifelse(
+      nuggets_home_or_away_ind == "h",
+      # home team
+      ifelse(
+        (h1 == "Nikola Jokic" | h2 == "Nikola Jokic" | h3 == "Nikola Jokic" |
+           h4 == "Nikola Jokic" | h5 == "Nikola Jokic"),
+        1,
+        0
+      ),
+      # away team
+      ifelse(
+        (a1 == "Nikola Jokic" | a2 == "Nikola Jokic" | a3 == "Nikola Jokic" |
+           a4 == "Nikola Jokic" | a5 == "Nikola Jokic"),
+        1,
+        0
+      )
+    ),
+    millsap_on_court_ind = ifelse(
+      nuggets_home_or_away_ind == "h",
+      # home team
+      ifelse(
+        (h1 == "Paul Millsap" | h2 == "Paul Millsap" | h3 == "Paul Millsap" |
+           h4 == "Paul Millsap" | h5 == "Paul Millsap"),
+        1,
+        0
+      ),
+      # away team
+      ifelse(
+        (a1 == "Paul Millsap" | a2 == "Paul Millsap" | a3 == "Paul Millsap" |
+           a4 == "Paul Millsap" | a5 == "Paul Millsap"),
+        1,
+        0
+      )
+    ),
+    gobert_on_court_ind = ifelse(
+      nuggets_home_or_away_ind == "a",
+      # jazz are home team
+      ifelse(
+        (h1 == "Rudy Gobert" | h2 == "Rudy Gobert" | h3 == "Rudy Gobert" |
+           h4 == "Rudy Gobert" | h5 == "Rudy Gobert"),
+        1,
+        0
+      ),
+      # jazz are away team
+      ifelse(
+        (a1 == "Rudy Gobert" | a2 == "Rudy Gobert" | a3 == "Rudy Gobert" |
+           a4 == "Rudy Gobert" | a5 == "Rudy Gobert"),
+        1,
+        0
+      )
+    ),
+    nugs_score = ifelse(
+      nuggets_home_or_away_ind == "h",
+      home_score,
+      away_score
+    ),
+    jazz_score = ifelse(
+      nuggets_home_or_away_ind == "h",
+      away_score,
+      home_score
+    ),
+    nugs_score_advantage = nugs_score - jazz_score
+  )
+mj_vs_jazz = nugs_vs_jazz_games %>% 
+  filter(jokic_on_court_ind == 1, millsap_on_court_ind == 1)
+mj_vs_jazz %>% 
+  count(game_id)
+```
+
+```{r}
+mj_vs_jazz %>% 
+  group_by(game_id, team) %>% 
+  summarize(
+    points = sum(points, na.rm = T)
+  ) %>% 
+  filter(!is.na(team)) %>% 
+  spread(team, points) %>% 
+  mutate(nugs_point_differential = DEN - UTA)
+```
+
+```{r}
+mj_vs_jazz %>% 
+  group_by(team) %>% 
+  summarize(
+    points = sum(points, na.rm = T)
+  ) %>% 
+  filter(!is.na(team)) %>% 
+  spread(team, points) %>% 
+  mutate(nugs_point_differential = DEN - UTA)
+```
+
+
+What about with Gobert on the court?
+
+```{r}
+mj_vs_jazz %>% 
+  filter(gobert_on_court_ind == 1) %>% 
+  group_by(game_id, team) %>% 
+  summarize(
+    points = sum(points, na.rm = T)
+  ) %>% 
+  filter(!is.na(team)) %>% 
+  spread(team, points) %>% 
+  mutate(nugs_point_differential = DEN - UTA)
+```
+
+Gobert off the court:
+
+```{r}
+mj_vs_jazz %>% 
+  filter(gobert_on_court_ind == 0) %>% 
+  group_by(game_id, team) %>% 
+  summarize(
+    points = sum(points, na.rm = T)
+  ) %>% 
+  filter(!is.na(team)) %>% 
+  spread(team, points) %>% 
+  mutate(nugs_point_differential = DEN - UTA)
+```
+
+Just Jokic and Gobert:
+
+```{r}
+nugs_vs_jazz_games %>% 
+  filter(jokic_on_court_ind == 1, gobert_on_court_ind == 1) %>% 
+  group_by(team) %>% 
+  summarize(
+    points = sum(points, na.rm = T)
+  ) %>% 
+  filter(!is.na(team)) %>% 
+  spread(team, points) %>% 
+  mutate(nugs_point_differential = DEN - UTA)
+# nugs_vs_jazz_games %>% 
+#   filter(jokic_on_court_ind == 1, gobert_on_court_ind == 1) %>% 
+#   count()
+```
+
+Jokic without Gobert:
+
+```{r}
+nugs_vs_jazz_games %>% 
+  filter(jokic_on_court_ind == 1, gobert_on_court_ind == 0) %>% 
+  group_by(team) %>% 
+  summarize(
+    points = sum(points, na.rm = T)
+  ) %>% 
+  filter(!is.na(team)) %>% 
+  spread(team, points) %>% 
+  mutate(nugs_point_differential = DEN - UTA)
+# nugs_vs_jazz_games %>% 
+#   filter(jokic_on_court_ind == 1, gobert_on_court_ind == 0) %>% 
+#   count()
+```
+
+```{r}
+nugs_vs_jazz_games %>% 
+  filter(jokic_on_court_ind == 1) %>% 
+  group_by(team) %>% 
+  summarize(
+    points = sum(points, na.rm = T)
+  ) %>% 
+  filter(!is.na(team)) %>% 
+  spread(team, points) %>% 
+  mutate(nugs_point_differential = DEN - UTA)
+```
+
+
+```{r}
+nugs_vs_jazz_games %>% 
+  group_by(game_id) %>% 
+  slice(n()) %>% 
+  select(home_score, away_score, nuggets_home_or_away_ind)
+```
+
+
+
+
+
